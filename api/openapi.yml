@@ -1,0 +1,165 @@
+# API-first development with OpenAPI
+openapi: '3.0.1'
+info:
+  title: 'Subscription Manager'
+  version: 0.0.1
+servers:
+  - url: http://localhost/dev/api
+    description: Development server
+  - url: https://submgr.dev.workspacenow.cloud/api
+    description: Production Url
+security:
+  - oauth: [jhipster, email, profile]
+  - openId: [jhipster, email, profile]    
+paths:
+  /health:
+    get:
+      tags:
+      - Health Check Endpoint
+      responses:
+        "200":
+          description: "Success"
+  /plans:
+    get:
+      tags:
+      - Plan Related Endpoints
+      summary: Returns a list of available subscription plans."
+      responses:
+        "200":
+          description: "The response includes a json payload that represents a list of APlan instances."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListOfAPlans'
+  /plans/current:
+    get:
+      tags:
+      - Plan Related Endpoints
+      summary: Returns an instance of APlan that a logged on user is currently using."
+      responses:
+        "200":
+          description: "The response includes a json payload that represents an instance of APlan."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APlan'
+        "404":
+          description: "A user does NOT have a valid plan. The AResult.Code might have one of the following values: 1 - A user has not completed a checkout, APlan.Message includes a redirect URL; 2 - A plan has been found but its status is incorrect."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AResult'
+  /payments/checkout:
+    get:
+      tags:
+      - Subscription Checkout
+      summary: Initiates a subscription process.
+      parameters:
+      - name: "price_id"
+        in: "query"
+        required: true
+        description: "set price id"
+        example: price_1LECZyKUSkDFrC1EroX3h7NW
+        schema:
+          type: string
+      responses:
+        "200":
+          description: "A success code is returned when a user subscribes to a plan. The AResult.Code might have one of the following values: 1 - A user is being sent to a stripe checkout, APlan.Message includes a redirect URL; 2 - A user is successfully subscribed to a free plan; 3 - successfully switched to another plan. "
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AResult'
+        "208":
+          description: "The user is already subscribed to the provided plan."
+  /payments/stripewebhook:
+    post:
+      tags:
+      - Payments Stripewebhook
+      summary: Return stripe webhook page."
+      responses:
+        "200":
+          description: "The response includes a json payload that represents an instance of APlan."
+  /payments/history:
+    get:
+      tags:
+      - Payment History
+      summary: Returns a list APayment instances for a logged on user."
+      responses:
+        "200":
+          description: "The response includes a json payload that represents an array of APayment instances."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListOfAPayments'
+        "404":
+          description: "A user does not have any payment history."
+components:
+  schemas:
+    APlan:
+      title: API Object that contains details of a subscription plan.
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+        recurrence:
+          type: integer
+    ListOfAPlans:
+      type: object
+      properties:
+        plans:
+          type: array
+          items:
+            $ref: '#/components/schemas/APlan'
+    APayment:
+      title: API Object that contains details of a payment.
+      type: object
+      properties:
+        issuedDate:
+          type: string
+          format: date
+        amount:
+          type: number
+        currency:
+          type: string
+        method:
+          type: string
+    ListOfAPayments:
+      type: object
+      properties:
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/APayment'
+    AResult:
+      title: API Result Object used to deliver a result of an API call to the client.
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+  securitySchemes:
+    oauth:
+      type: oauth2
+      description: OAuth2 authentication with KeyCloak
+      flows:
+        authorizationCode:
+          #authorizationUrl: http://localhost/auth/realms/officekube/protocol/openid-connect/auth
+          #tokenUrl: http://localhost/auth/realms/officekube/protocol/openid-connect/token
+          authorizationUrl: https://keycloak.dev.workspacenow.cloud/auth/realms/officekube/protocol/openid-connect/auth
+          tokenUrl: https://keycloak.dev.workspacenow.cloud/auth/realms/officekube/protocol/openid-connect/token
+          scopes:
+            jhipster: Jhipster specific claims
+            email: Email claims
+            profile: Profile claims
+    openId:
+        type: openIdConnect
+        description: OpenID Connect authentication with KeyCloak
+        #openIdConnectUrl: http://localhost/auth/realms/officekube/.well-known/openid-configuration
+        openIdConnectUrl: https://keycloak.dev.workspacenow.cloud/auth/realms/officekube/.well-known/openid-configuration

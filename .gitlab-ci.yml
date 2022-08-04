@@ -1,0 +1,67 @@
+image: golang:1.17-alpine
+
+stages:
+  - build
+  - test
+  - package_docker
+  - release
+  - deploy
+before_script:
+  - export NG_CLI_ANALYTICS="false"
+  - export MAVEN_USER_HOME=`pwd`/.maven
+
+go-compile:
+  stage: build
+  script:
+    - go get subscriptionManager
+    - go build
+
+package-docker:
+  stage: package_docker
+  # Had to configure as per comment from Olivier Lacan here https://gitlab.com/gitlab-org/gitlab-runner/-/issues/27300
+  image: docker:stable
+  services:
+    - name: docker:dind
+      alias: dockerhost
+      # in our experience although you'd assume this would be sufficient, this did 
+      # nothing to prevent connection errors without `DOCKER_TLS_CERTDIR` being set 
+      # to an empty string, and I would call that beyond mildly infuriating.
+      command: ["--tls=false"]
+  variables:
+    # Set the deployment name below
+    DEPLOYMENT_NAME: subscriptionmanagersvc
+    DOCKER_REGISTRY: 893546139438.dkr.ecr.us-east-1.amazonaws.com/devcloud
+    # using "dockerhost" as the host is only possible if you alias the service above
+    DOCKER_HOST: tcp://dockerhost:2375/
+    # Improve performance with overlayfs.
+    # could be wrong here but although Docker defaults to overlay2, 
+    # Docker-in-Docker (DIND) does not according to the following GitLab doc: 
+    # https://docs.gitlab.com/ee/ci/docker/using_docker_build.html#use-the-overlayfs-driver
+    DOCKER_DRIVER: overlay2
+    # This instructs Docker not to start over TLS.
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - apk add --no-cache curl jq python3 py-pip
+    - pip3 install awscli
+  script:
+    - $(aws ecr get-login --no-include-email --region us-east-1)
+    - docker build -t $DOCKER_REGISTRY:$DEPLOYMENT_NAME .
+    - docker push $DOCKER_REGISTRY:$DEPLOYMENT_NAME
+deploy-eks:
+  stage: deploy
+  #stage: build_docker for testing only
+  # Add dependency on maven-package job so that the app jar created by it can be used in docker
+  dependencies:
+    - package-docker
+    #- maven-compile # for testing only
+  # will use the image below that comes with pre-installed awsclie and kubectl. Refer to https://github.com/bearengineer/awscli-kubectl
+  image: bearengineer/awscli-kubectl
+  before_script:
+    - export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+    - export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    - export AWS_DEFAULT_REGION=us-east-1
+  script:
+    - kubectl apply -f k8sdeployment.yml
+    # Force the restart of the deployment so that it picks up a new docker image. 
+    # This is needed if no change was made to k8sdeployment.yml in which case the command above will not force k8s to re-deploy pods with the new docker image.
+    - kubectl rollout restart deployments/subscriptionmanagersvc-app -n platform

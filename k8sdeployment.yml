@@ -1,0 +1,97 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: subscriptionmanagersvc-app
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: subscriptionmanagersvc-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: subscriptionmanagersvc-app
+    spec:
+      containers:
+      - image: 893546139438.dkr.ecr.us-east-1.amazonaws.com/devcloud:subscriptionmanagersvc
+        imagePullPolicy: Always
+        name: subscriptionmanagersvc-app
+# Constrain the container as per https://kubernetes.io/docs/tasks/configure-pod-container/assign-memory-resource/
+        resources:
+          limits:
+            memory: 48Mi
+          requests:
+            memory: 48Mi
+        ports:
+          - containerPort: 8085
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8085
+          timeoutSeconds: 5
+          initialDelaySeconds: 60
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8085
+          timeoutSeconds: 5
+          initialDelaySeconds: 60
+      terminationGracePeriodSeconds: 60
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: subscriptionmanagersvc-svc
+  namespace: platform
+spec:
+  ports:
+    - port: 80
+      targetPort: 8085
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: subscriptionmanagersvc-app
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing-subscriptionmanagersvc
+  namespace: platform
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: user-workspaces-group
+    # Health Check Settings
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP 
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    #Important Note:  Need to add health check path annotations in service level if we are planning to use multiple targets in a load balancer    
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    alb.ingress.kubernetes.io/success-codes: '200'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    # Set up both http/https with https termination on the ingress controller and http->https redirect
+    # Based on https://www.stacksimplify.com/aws-eks/aws-alb-ingress/learn-to-enable-ssl-redirect-in-alb-ingress-service-on-aws-eks/
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:893546139438:certificate/f56314a4-8332-47f4-b5e0-8d3fc9b6116a
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
+    # SSL Redirect Setting
+    alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
+spec:
+  rules:
+# As per https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/1195, while ALB Ingress support multiple paths and it does NOT support re-writes
+# which is pending as a feature request for over 2 years now - https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/835.
+# So, we cannot put different workspace pods behind different paths w/o having to modify the components of each workspace to server at relative paths.
+# Actually, a better solution is to put each service behind *.workspacenow.cloud in the format <service-name>.workspacenow.cloud. 
+    - host: submgr.dev.workspacenow.cloud
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: 
+                name: subscriptionmanagersvc-svc
+                port:
+                  number: 80
